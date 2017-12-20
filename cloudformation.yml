@@ -1,0 +1,217 @@
+Parameters:
+
+  ResourceBucketName:
+    Type: String
+    Description: name for public resource bucket
+
+  S3LambdaBucket:
+    Type: String
+    Description: s3 location of java lambda deployment package(s)
+
+  NetCDFExtractorLambdaKey:
+    Type: String
+    Description: lambda object key for NetCDFExtractor jar
+
+  MaxDownloadByteSize:
+    Type: String
+    Description: max file size for remote files
+
+Resources:
+
+  S3Resource:
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Ref ResourceBucketName
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      CorsConfiguration:
+        CorsRules:
+          -
+            AllowedMethods: [GET]
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['*']
+        
+
+  S3ResourcePublicWebsitePolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref S3Resource
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - s3:GetObject
+            Effect: "Allow"
+            Resource:
+              !Join [ "", [ "arn:aws:s3:::", !Ref S3Resource, "/*"  ] ]
+            Principal: "*"
+          -
+            Action:
+              - s3:ListBucket
+            Effect: "Allow"
+            Resource:
+              !Join [ "", [ "arn:aws:s3:::", !Ref S3Resource ] ]
+            Principal: "*"
+
+
+  LambdaNetCDFExtractor:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Code:
+        S3Bucket: !Ref S3LambdaBucket
+        S3Key: !Ref NetCDFExtractorLambdaKey
+      Description: processes netcdfs
+      FunctionName:
+        !Sub ${AWS::StackName}_NetCDF
+      Handler: com.gsat.netcdfextractor.Handler::handleRequest
+      MemorySize: 1536
+      Role:
+        !GetAtt LambdaGlobalRole.Arn
+      Runtime: java8
+      Timeout: 10
+      Environment:
+        Variables:
+          s3Store: !Ref S3Resource
+          publicWebsiteUrl: !GetAtt S3Resource.WebsiteURL
+          maxDownloadByteSize: !Ref MaxDownloadByteSize
+
+  LambdaGlobalRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "inline-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              -
+                Effect: "Allow"
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:aws:s3:::${S3Resource}
+                  - !Sub arn:aws:s3:::${S3Resource}/*
+
+  APIGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: !Ref AWS::StackName
+
+  APIGDeploymentProd:
+    DependsOn: APIGNetCDFExtractorPOST
+    Type: "AWS::ApiGateway::Deployment"
+    Properties:
+      RestApiId:
+        !Ref APIGateway
+      StageName: dummystage
+
+  APIGStage:
+    Type: "AWS::ApiGateway::Stage"
+    Properties:
+      DeploymentId: !Ref APIGDeploymentProd
+      RestApiId: !Ref APIGateway
+      StageName: LATEST
+
+  APIGNetCDFExtractorResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId:
+        !GetAtt APIGateway.RootResourceId
+      PathPart: netcdfextractor
+      RestApiId: !Ref APIGateway
+
+  APIGNetCDFExtractorPOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId:
+        !Ref APIGNetCDFExtractorResource
+      RestApiId:
+        !Ref APIGateway
+      Integration:
+        Credentials:
+          !GetAtt APIGExecuteLambdaRole.Arn
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Arn}/invocations
+          - Arn:
+              Fn::GetAtt:
+              - LambdaNetCDFExtractor
+              - Arn
+
+  APIGNetCDFExtractorOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref APIGateway
+      ResourceId: !Ref APIGNetCDFExtractorResource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'POST'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  APIGExecuteLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "apigateway.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "inline-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  !GetAtt LambdaNetCDFExtractor.Arn
