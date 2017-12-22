@@ -1,7 +1,6 @@
 import React from 'react'
 import { Input } from 'semantic-ui-react'
 import { Button } from 'semantic-ui-react'
-import { Checkbox } from 'semantic-ui-react'
 import { Dropdown } from 'semantic-ui-react'
 import axios from 'axios'
 import config from '../config'
@@ -27,19 +26,21 @@ const styles = {
 class URLField extends React.Component {
 
   state = {
-    //input: 'https://www.unidata.ucar.edu/software/netcdf/examples/sresa1b_ncar_ccsm3-example.nc',
-    input: ''
+    input: '',
+    recent: []
   };
 
   inputChange = (value) => {
     this.setState({
-      input: value,
+      ...this.state,
+      input: value
     })
   }
 
-  buttonClick = () => {
+  buttonClick = (url) => {
+
     axios.post(`${config.apiEndpoint}/netcdfextractor`, {
-      url: this.state.input
+      url: url || this.state.input
     })
       .then(response => {
         this.props.handleExtract(response.data)
@@ -49,14 +50,41 @@ class URLField extends React.Component {
       })
   }
 
+  componentWillMount() {
+    axios.get(`${config.apiEndpoint}/netcdflist`)
+      .then(response => {
+        this.setState({ ...this.state, recent: response.data.list })
+      })
+      .catch(err => {
+        console.log(err)
+      })
+  }
+
+  onRecentSelected = (url) => {
+    this.setState({
+      ...this.state,
+      input: url
+    })
+    this.buttonClick(url)
+  }
+
   render() {
     return (
       <div style={styles.container}>
         <div style={styles.history}>
-          <Dropdown text='Recent'>
+          <Dropdown
+            onChange={this.onRecentSelected}
+            text='Recent'
+          >
             <Dropdown.Menu>
-              <Dropdown.Item text='New' />
-
+              {this.state.recent.length > 0 ? this.state.recent.map(metadata => {
+                return (
+                  <Dropdown.Item
+                    key={metadata.url}
+                    text={metadata.url}
+                    onClick={() => this.onRecentSelected(metadata.url)}
+                  />)
+              }) : <Dropdown.Item disabled text='there are no recent items' />}
             </Dropdown.Menu>
           </Dropdown>
         </div>
@@ -70,9 +98,9 @@ class URLField extends React.Component {
           placeholder='location of NetCDF file'
         />
         <Button
-          onClick={this.buttonClick}
+          onClick={() => this.buttonClick()}
         >extract</Button>
-      </div>
+      </div >
     )
   }
 }

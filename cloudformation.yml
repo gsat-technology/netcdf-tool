@@ -11,6 +11,10 @@ Parameters:
   NetCDFExtractorLambdaKey:
     Type: String
     Description: lambda object key for NetCDFExtractor jar
+  
+  NetCDFListLambdaKey:
+    Type: String
+    Description: lambda object key for NetCDFList jar
 
   MaxDownloadByteSize:
     Type: String
@@ -32,7 +36,6 @@ Resources:
             AllowedOrigins: ['*']
             AllowedHeaders: ['*']
         
-
   S3ResourcePublicWebsitePolicy:
     Type: "AWS::S3::BucketPolicy"
     Properties:
@@ -54,7 +57,6 @@ Resources:
               !Join [ "", [ "arn:aws:s3:::", !Ref S3Resource ] ]
             Principal: "*"
 
-
   LambdaNetCDFExtractor:
     Type: "AWS::Lambda::Function"
     Properties:
@@ -63,7 +65,7 @@ Resources:
         S3Key: !Ref NetCDFExtractorLambdaKey
       Description: processes netcdfs
       FunctionName:
-        !Sub ${AWS::StackName}_NetCDF
+        !Sub ${AWS::StackName}_NetCDFExtractor
       Handler: com.gsat.netcdfextractor.Handler::handleRequest
       MemorySize: 1536
       Role:
@@ -75,6 +77,25 @@ Resources:
           s3Store: !Ref S3Resource
           publicWebsiteUrl: !GetAtt S3Resource.WebsiteURL
           maxDownloadByteSize: !Ref MaxDownloadByteSize
+
+  LambdaNetCDFList:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Code:
+        S3Bucket: !Ref S3LambdaBucket
+        S3Key: !Ref NetCDFListLambdaKey
+      Description: lists netcdfs
+      FunctionName:
+        !Sub ${AWS::StackName}_NetCDFList
+      Handler: com.gsat.netcdflist.Handler::handleRequest
+      MemorySize: 1536
+      Role:
+        !GetAtt LambdaGlobalRole.Arn
+      Runtime: java8
+      Timeout: 10
+      Environment:
+        Variables:
+          s3Store: !Ref S3Resource
 
   LambdaGlobalRole:
     Type: "AWS::IAM::Role"
@@ -189,6 +210,63 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: false
             method.response.header.Access-Control-Allow-Origin: false
 
+  APIGNetCDFListResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId:
+        !GetAtt APIGateway.RootResourceId
+      PathPart: netcdflist
+      RestApiId: !Ref APIGateway
+
+  APIGNetCDFListGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId:
+        !Ref APIGNetCDFListResource
+      RestApiId:
+        !Ref APIGateway
+      Integration:
+        Credentials:
+          !GetAtt APIGExecuteLambdaRole.Arn
+        Type: AWS_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Arn}/invocations
+          - Arn:
+              Fn::GetAtt:
+              - LambdaNetCDFList
+              - Arn
+
+  APIGNetCDFListOPTIONS:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref APIGateway
+      ResourceId: !Ref APIGNetCDFListResource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'POST'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
   APIGExecuteLambdaRole:
     Type: "AWS::IAM::Role"
     Properties:
@@ -215,3 +293,9 @@ Resources:
                   - lambda:InvokeFunction
                 Resource:
                   !GetAtt LambdaNetCDFExtractor.Arn
+              -
+                Effect: "Allow"
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  !GetAtt LambdaNetCDFList.Arn
