@@ -1,7 +1,7 @@
 import React, { Component } from 'react'
 import './App.css'
 import URLField from './components/URLField'
-import { Grid } from 'semantic-ui-react'
+import { Grid, Transition } from 'semantic-ui-react'
 import HeaderContainer from './components/HeaderContainer'
 import axios from 'axios'
 import Metadata from './components/Metadata'
@@ -17,19 +17,20 @@ const styles = {
 class App extends Component {
 
   state = {
-    header: null,
-    metadata: null
+    header: 'enter a url for a netcdf file or select from recents',
+    metadata: null,
+    animationVisibility: true
   };
 
-  handleExtract = (data) => {
+  didFinishExtract = (data) => {
 
     axios.get(data.locations.header)
       .then(response => {
-        this.setState({ header: response.data })
+        this.setState({ ...this.state, header: response.data })
 
         axios.get(data.locations.metadata)
           .then(response => {
-            this.setState({ metadata: response.data })
+            this.setState({ ...this.state, metadata: response.data, animationVisibility: true })
           })
           .catch(err => {
             console.log(err)
@@ -40,17 +41,37 @@ class App extends Component {
       })
   }
 
+  didStartExtract = () => {
+    this.setState({
+      ...this.state,
+      animationVisibility: false
+    })
+  }
+
   render() {
+
     return (
       <Grid columns='equal'>
         <Grid.Column>
         </Grid.Column>
         <Grid.Column width={15}>
-          <URLField handleExtract={this.handleExtract} />
-          <div style={styles.metadata}>
-            {this.state.metadata !== null ? <Metadata metadata={this.state.metadata} /> : null}
-          </div>
-          {this.state.header !== null ? <HeaderContainer headerText={this.state.header} /> : null}
+          <URLField
+            didFinishExtract={this.didFinishExtract}
+            didStartExtract={this.didStartExtract}
+          />
+
+          <Transition
+            visible={this.state.animationVisibility}
+            animation='horizontal flip'
+            duration={1000}
+          >
+            <div>
+              <div style={styles.metadata}>
+                <Metadata metadata={this.state.metadata} />
+              </div>
+              <HeaderContainer headerText={this.state.header} />
+            </div>
+          </Transition>
         </Grid.Column>
         <Grid.Column>
         </Grid.Column>

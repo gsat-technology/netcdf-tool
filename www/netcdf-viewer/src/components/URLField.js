@@ -27,7 +27,8 @@ class URLField extends React.Component {
 
   state = {
     input: '',
-    recent: []
+    recent: [],
+    buttonDisabled: false
   };
 
   inputChange = (value) => {
@@ -39,18 +40,23 @@ class URLField extends React.Component {
 
   buttonClick = (url) => {
 
+    this.props.didStartExtract()
+
     axios.post(`${config.apiEndpoint}/netcdfextractor`, {
       url: url || this.state.input
     })
       .then(response => {
-        this.props.handleExtract(response.data)
+
+        if (response.data.source === "download") this.loadRecents()
+        this.props.didFinishExtract(response.data)
+        this.setState({ ...this.state, buttonDisabled: false })
       })
       .catch(err => {
         console.log(err)
       })
   }
 
-  componentWillMount() {
+  loadRecents = () => {
     axios.get(`${config.apiEndpoint}/netcdflist`)
       .then(response => {
         this.setState({ ...this.state, recent: response.data.list })
@@ -60,10 +66,15 @@ class URLField extends React.Component {
       })
   }
 
+  componentWillMount() {
+    this.loadRecents()
+  }
+
   onRecentSelected = (url) => {
     this.setState({
       ...this.state,
-      input: url
+      input: url,
+      buttonDisabled: true
     })
     this.buttonClick(url)
   }
@@ -98,6 +109,7 @@ class URLField extends React.Component {
           placeholder='location of NetCDF file'
         />
         <Button
+          disabled={this.state.buttonDisabled}
           onClick={() => this.buttonClick()}
         >extract</Button>
       </div >
